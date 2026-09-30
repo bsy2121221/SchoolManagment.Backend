@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "SchoolManagment.Models/1.0.0": {
+        "runtime": {
+          "SchoolManagment.Models.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "SchoolManagment.Models/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

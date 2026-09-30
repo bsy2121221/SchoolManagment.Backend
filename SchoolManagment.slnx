@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="SchoolManagment.API/SchoolManagment.API.csproj" />
+  <Project Path="SchoolManagment.Auth/SchoolManagment.Auth.csproj" />
+  <Project Path="SchoolManagment.DataAccess/SchoolManagment.DataAccess.csproj" Id="de85edec-2a9a-46cd-a3ba-d2a77a2f6097" />
+  <Project Path="SchoolManagment.Models/SchoolManagment.Models.csproj" Id="4113b21a-e5a2-48d9-8abd-ded6fa4b72ad" />
+</Solution>

@@ -1,0 +1,1570 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>SchoolManagment.API</name>
+    </assembly>
+    <members>
+        <member name="T:SchoolManagment.API.Authorization.PermissionAuthorizationHandler">
+            <summary>
+            Evaluates a <see cref="T:SchoolManagment.API.Authorization.PermissionRequirement"/> against the "perm" claims
+            in the caller's access token. No database round trip: the grid was read at
+            login and at every refresh, so a permission change lands within one token
+            lifetime.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Authorization.PermissionPolicyRegistration.AddPermissionPolicies(Microsoft.AspNetCore.Authorization.AuthorizationOptions)">
+            <summary>
+            Registers one policy per (module, action) pair -- 15 modules x 4
+            actions. Registered eagerly rather than through a policy provider
+            because the set is small, fixed, and known at startup, and because a
+            typo in a module name then fails at startup instead of silently
+            denying at runtime.
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Authorization.PermissionRequirement">
+            <summary>
+            "the caller may <see cref="P:SchoolManagment.API.Authorization.PermissionRequirement.Action"/> in <see cref="P:SchoolManagment.API.Authorization.PermissionRequirement.Module"/>".
+            </summary>
+        </member>
+        <member name="P:SchoolManagment.API.Authorization.PermissionRequirement.Module">
+            <summary>A name from Constants.Modules.</summary>
+        </member>
+        <member name="P:SchoolManagment.API.Authorization.PermissionRequirement.Action">
+            <summary>A name from Constants.PermissionActions.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Authorization.PermissionRequirement.PolicyName(System.String,System.String)">
+            <summary>
+            The policy name a requirement is registered under. Built rather than
+            listed so a new module needs no change here.
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Authorization.RequiresPermissionAttribute">
+             <summary>
+             Authorises an action against the caller's permission grid instead of
+             against a hard-coded list of role names:
+            
+                 [RequiresPermission(Constants.Modules.Users, Constants.PermissionActions.Edit)]
+            
+             The grid is data, so an admin can widen or narrow access without a
+             redeploy -- which is the point of the Roles / RolePermissions tables.
+             A module the caller has no row for is denied.
+            
+             This still requires authentication: it derives from AuthorizeAttribute, so
+             an anonymous request is challenged before the requirement is evaluated.
+             </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.AttendanceController">
+             <summary>
+             Attendance management endpoints.
+            
+             Two guards on every action, as elsewhere in the project: the role policy is the
+             coarse route check and <c>[RequiresPermission]</c> is the fine one. The permission
+             attributes are new -- this controller was the only one in the solution that named no
+             module at all, so <c>Attendance</c> was a column in the grid that nothing read. An
+             administrator who took <c>Attendance:Create</c> away from the Teacher role saw no
+             change in behaviour, which is the grid lying.
+            
+             Marking is a MERGE, so it creates and corrects through one endpoint and is gated on
+             <c>Create</c> -- consistent with POST everywhere else here. The consequence is worth
+             stating: a custom role given <c>Edit</c> but not <c>Create</c> cannot correct a
+             register, because there is no separate update to gate on <c>Edit</c>.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.MarkAttendance(SchoolManagment.Models.DTOs.Attendance.AttendanceMarkDTO)">
+             <summary>
+             Mark attendance for a single student. Requires create access to the Attendance module.
+            
+             An upsert: re-marking a student on a date the register already covers overwrites
+             that row rather than failing. Its one refusal is a student who is not actively
+             enrolled in the class given, which the procedure checks so that a mistyped class
+             id cannot file a record against the wrong register.
+             </summary>
+             <param name="request">Attendance details</param>
+             <returns>Mark result</returns>
+             <response code="200">Attendance marked successfully</response>
+             <response code="400">Invalid request or marking failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.MarkAttendanceBulk(SchoolManagment.Models.DTOs.Attendance.AttendanceBulkMarkDTO)">
+             <summary>
+             Mark attendance for multiple students in bulk (entire class). Requires create
+             access to the Attendance module.
+            
+             One transaction for the whole register, so a failure part-way leaves it as it
+             was rather than half-marked. Records naming a student who is not actively
+             enrolled in the class are skipped and counted rather than aborting the
+             submission -- so a non-zero <c>RecordsSkipped</c> is a successful save that did
+             less than the caller asked, and the response says so rather than implying the
+             register is complete.
+             </summary>
+             <param name="request">Bulk attendance data</param>
+             <returns>Bulk mark result with counts</returns>
+             <response code="200">Attendance marked successfully</response>
+             <response code="400">Invalid request or marking failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.GetClassAttendance(System.Int32,System.Nullable{System.DateTime})">
+             <summary>
+             Get class attendance register for a specific date. Requires view access to the
+             Attendance module.
+            
+             Driven from the class roll with a LEFT JOIN, so a student with nothing marked
+             comes back with a null <c>isPresent</c>. That third state is the point of the
+             screen: it distinguishes "absent" from "not yet decided", which an empty list
+             could not.
+             </summary>
+             <param name="classId">Class ID</param>
+             <param name="attendanceDate">Date (defaults to today)</param>
+             <returns>List of students with attendance status</returns>
+             <response code="200">Attendance retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.GetStudentAttendance(System.Int32,System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>
+            Get attendance history for a specific student. Requires view access to the
+            Attendance module.
+            </summary>
+            <param name="studentId">Student ID</param>
+            <param name="startDate">Start date (defaults to 1 month ago)</param>
+            <param name="endDate">End date (defaults to today)</param>
+            <returns>List of attendance records</returns>
+            <response code="200">Attendance history retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.GetAttendanceSummary(System.Nullable{System.Int32},System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+             <summary>
+             Get attendance summary with percentages. Requires view access to the Attendance
+             module.
+            
+             Driven from the student roll, so a student with nothing marked in the window
+             still appears, with a null percentage rather than a zero. Those are different
+             facts: 0% is a student who was marked absent every day, null is a register
+             nobody opened.
+             </summary>
+             <param name="classId">Filter by class ID (optional)</param>
+             <param name="startDate">Start date (defaults to 1 month ago)</param>
+             <param name="endDate">End date (defaults to today)</param>
+             <returns>Attendance summary with statistics</returns>
+             <response code="200">Summary retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AttendanceController.GetDailyAttendanceReport(System.Nullable{System.Int32},System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+             <summary>
+             Get daily attendance report (aggregated by date). Requires view access to the
+             Attendance module.
+            
+             Driven from the Attendance rows themselves, unlike the summary above, so a date
+             on which nobody was marked is absent from the report rather than present with
+             zeroes. Gaps in the returned dates are therefore unopened registers.
+             </summary>
+             <param name="classId">Filter by class ID (optional)</param>
+             <param name="startDate">Start date (defaults to 1 month ago)</param>
+             <param name="endDate">End date (defaults to today)</param>
+             <returns>Daily attendance statistics</returns>
+             <response code="200">Report retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.Login(SchoolManagment.Models.DTOs.Auth.LoginRequestDTO)">
+            <summary>
+            User login with username and password
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.RefreshToken(SchoolManagment.Models.DTOs.Auth.RefreshTokenRequestDTO)">
+            <summary>
+            Refresh access token using refresh token
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.Logout(SchoolManagment.Models.DTOs.Auth.LogoutRequestDTO)">
+            <summary>
+            Logout user by revoking refresh token
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.ChangePassword(SchoolManagment.Models.DTOs.Auth.ChangePasswordRequestDTO)">
+            <summary>
+            Change password for logged-in user
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.ResetPassword(SchoolManagment.Models.DTOs.Auth.ResetPasswordRequestDTO)">
+            <summary>
+            Reset password for a user (Admin/SuperAdmin only)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.AuthController.GetCurrentUser">
+            <summary>
+            Get current user info from token, including the permission grid the
+            token carries -- so a client can decide what to show without asking
+            again.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.CreateClass(SchoolManagment.Models.DTOs.Classes.ClassCreateDTO)">
+            <summary>
+            Create a new class (Admin only)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.GetAllClasses(System.String,System.Nullable{System.Boolean},System.Int32,System.Int32)">
+            <summary>
+            Get all classes (paginated, with filters) - Admin/Teacher
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.GetClassById(System.Int32)">
+            <summary>
+            Get class by ID - Admin/Teacher
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.GetClassDetails(System.Int32)">
+            <summary>
+            Get class details with students and stats - Admin/Teacher
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.UpdateClass(System.Int32,SchoolManagment.Models.DTOs.Classes.ClassUpdateDTO)">
+            <summary>
+            Update class - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.UpdateClassStatus(System.Int32,SchoolManagment.Models.DTOs.Classes.ClassStatusUpdateDTO)">
+            <summary>
+            Update class status - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.DeleteClass(System.Int32)">
+            <summary>
+            Delete class - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.GetClassStudents(System.Int32)">
+            <summary>
+            Get class students - Admin/Teacher
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ClassesController.GetClassTimetable(System.Int32,System.Nullable{System.Int32})">
+            <summary>
+            Get class timetable - Admin/Teacher/Student (in class)
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.DashboardController">
+             <summary>
+             The landing page, in one request.
+            
+             One endpoint rather than one per role. A per-role set -- /admin, /teacher,
+             /student -- would put the same decision in two places, the route the client
+             chooses and the guard on the action, and the two can disagree. Here the token
+             decides, and a client that renders whichever sections came back cannot ask for
+             somebody else's screen.
+            
+             Nothing here accepts a user, student, teacher or school id. Identity comes from
+             the token, so the only dashboard reachable is the caller's own, in the school
+             their token names.
+            
+             Sections are trimmed to the caller's permission grid rather than refused: a
+             dashboard that 403s because one figure on it is out of reach is a dashboard
+             nobody can render. Withheld figures come back null with an entry in
+             <see cref="P:SchoolManagment.Models.DTOs.Dashboard.DashboardDTO.Omitted"/> naming the field and the permission it wanted,
+             which is how a client tells "withheld" from "zero".
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.DashboardController.GetDashboard">
+             <summary>
+             Everything the signed-in user's landing page shows.
+            
+             Which sections arrive depends on who is asking. A platform administrator who
+             has not switched into a school gets <c>platform</c>; one who has gets the
+             school's figures instead. <c>school</c> goes to anyone holding Reports:View.
+             <c>teacher</c>, <c>student</c> and <c>parent</c> follow the role, because "my
+             own timetable" is not something the permission grid can express. Recent
+             activity is always the caller's own rows.
+            
+             Always 200 for an authenticated caller, even when every section is null --
+             an account in an incomplete state, such as a Student-role login whose student
+             record has been deactivated, still needs a page to land on, and
+             <c>omitted</c> explains the blanks.
+            
+             No role guard and no [RequiresPermission]. Every section inside is gated on
+             its own, and a guard here would only decide who may be told they have nothing
+             to see.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.DashboardController.GetStats">
+             <summary>
+             Just the school-wide counts, for a widget that polls without dragging
+             schedules and audit rows along behind it.
+            
+             Guarded on Reports:View, not on the modules the figures come from. A student
+             holds Attendance:View so they can see their own register; reading that as
+             leave to see the school's would hand every pupil the whole roll's numbers.
+             The seeded grid gives Reports to SuperAdmin, Admin and Teacher, which is the
+             population school-wide aggregates belong to -- and this is the first endpoint
+             in the project to use that module, which until now was a permission nothing
+             checked.
+            
+             Figures within are still trimmed per module, by the same code that trims them
+             in the full dashboard, so the two can never disagree about what a role sees.
+             </summary>
+             <response code="400">
+             No school is in scope. Only reachable for a platform administrator who has
+             not switched into one; there is no school to count, which is a different
+             thing from a school that counts zero.
+             </response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.DashboardController.GetActivities(System.Int32)">
+             <summary>
+             The caller's own recent audit rows, newest first -- logins, record changes,
+             the trail behind "what did I just do".
+            
+             Authorisation is [Authorize] alone, with no reference to the Reports module.
+             These are the caller's own rows and nobody else's: the user id comes from the
+             token, so there is no parameter through which another person's history could
+             be requested. Reading the audit log at large is a different endpoint, and does
+             not exist yet.
+             </summary>
+             <param name="top">
+             How many rows, 1 to 500. Out-of-range values fall back to the procedure's
+             default of ten rather than failing -- a client asking for 0 or 10000 wants a
+             list, not a validation error, and silently returning nothing would look like
+             an empty log.
+             </param>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.ExaminationsController">
+             <summary>
+             Examination management endpoints.
+            
+             Two guards on every action, as elsewhere: the role policy is the coarse check and
+             <c>[RequiresPermission]</c> the fine one. The permission attributes are new -- this was
+             the second controller found naming no module at all (Attendance was the first), so
+             <c>Examinations</c> was a column in the seeded grid that nothing read. An administrator
+             taking <c>Examinations:Create</c> away from the Teacher role saw no change in behaviour,
+             which is the grid lying.
+            
+             The single POST creates and updates, because <c>sp_CreateOrUpdateExamination</c> is an
+             upsert matched on (ExamName, ExamType, ClassId, SubjectId). That has a consequence worth
+             stating plainly, since no part of the URL shape hints at it: <b>those four fields cannot
+             be edited.</b> Posting an existing exam under a new name creates a second exam and leaves
+             the first standing with its marks. Only the date, the two mark totals and the duration are
+             ever updated.
+            
+             Gating one upsert means gating on one action, and <c>Create</c> is what POST carries
+             everywhere else here. So a custom role granted <c>Edit</c> but not <c>Create</c> cannot
+             reschedule an exam -- the same gap recorded for Attendance, and for the same reason.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ExaminationsController.CreateOrUpdateExamination(SchoolManagment.Models.DTOs.Examinations.ExaminationCreateDTO)">
+             <summary>
+             Create or update an examination. Requires create access to the Examinations module.
+            
+             Matched on name, type, class and subject: a request whose four key fields match an
+             active exam updates that exam's date, marks and duration, and any other request
+             inserts. The one refusal beyond a bad class or subject is lowering
+             <c>MaxMarks</c> below a score already entered, which would leave marks on the report
+             card that no longer make sense.
+             </summary>
+             <param name="request">Examination details</param>
+             <returns>The examination's ID</returns>
+             <response code="201">Examination created</response>
+             <response code="200">Examination updated</response>
+             <response code="400">Invalid request or the operation was refused</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ExaminationsController.GetExaminations(System.Nullable{System.Int32})">
+             <summary>
+             Get all examinations, most recent first, with an optional class filter. Requires view
+             access to the Examinations module.
+            
+             Unpaged, and deliberately so at this layer -- the procedure returns every active exam
+             for the school. There is no subject filter: an exam is scoped to a class and a
+             subject, but only the class is a parameter.
+             </summary>
+             <param name="classId">Filter by class ID (optional)</param>
+             <returns>List of examinations</returns>
+             <response code="200">Examinations retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ExaminationsController.GetExaminationById(System.Int32)">
+             <summary>
+             Get one examination. Requires view access to the Examinations module.
+            
+             Soft-deleted examinations answer 404 here, which is what the mark-sheet screen relies
+             on: <c>GET {id}/results</c> cannot tell "no such exam" from "a class with no students",
+             because both are an empty set, so this endpoint is the guard for that one.
+             </summary>
+             <param name="examinationId">Examination ID</param>
+             <returns>Examination details</returns>
+             <response code="200">Examination found</response>
+             <response code="404">Examination not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ExaminationsController.DeleteExamination(System.Int32)">
+             <summary>
+             Delete an examination. Requires delete access to the Examinations module.
+            
+             A soft delete that takes the marks with it: <c>sp_DeleteExamination</c> deactivates
+             every result for the exam in the same transaction, so the exam does not vanish from
+             the lists while its scores remain on report cards. <c>ExaminationDTO.ResultsEntered</c>
+             is how a caller can say how many marks that is before asking.
+             </summary>
+             <param name="examinationId">Examination ID</param>
+             <returns>Delete result</returns>
+             <response code="200">Examination deleted successfully</response>
+             <response code="400">Delete refused, with the reason</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ExaminationsController.GetExaminationResults(System.Int32)">
+             <summary>
+             The mark sheet for one examination, with class rankings. Requires view access to the
+             Examinations module.
+            
+             This is a read, not an entry screen -- marks are written through ResultsController.
+             It returns the whole class rather than the students who have marks, so an unmarked
+             student appears with a null score; see the remarks on
+             <c>ExaminationResultsDTO.IsPass</c> for the one field that must not be read alone.
+             </summary>
+             <param name="examinationId">Examination ID</param>
+             <returns>Complete mark sheet with student rankings</returns>
+             <response code="200">Results retrieved successfully</response>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.FeesController">
+             <summary>
+             Fee types, billing, payments, receipts and the two finance reports.
+            
+             Rewritten in Phase 12. Before it, three of the fourteen endpoints could execute at all (see
+             FeeRepository), and every write compared the procedure's result against a sentence it never
+             returns — "Fee type created successfully", "Payment processed successfully" — so the few
+             writes that might have worked would still have been reported as failures. It is also the
+             fourth controller found carrying no <c>[RequiresPermission]</c>; every action has one now.
+            
+             <b>Everything except the fee-type list is AdminOnly.</b> The seeded grid gives Student
+             <c>Fees:View</c> and Parent <c>Fees:View</c> + <c>Fees:Create</c>, but:
+             <list type="bullet">
+             <item>Recording a payment asserts that the school has received money. A parent "creating" a
+             payment would be certifying their own cash with no gateway behind it, so payments stay with
+             the school's own staff whatever the grid says.</item>
+             <item>The per-student reads take a <c>Students.Id</c> and nothing here consults
+             <c>StudentParents</c>, so opening them to every holder of <c>Fees:View</c> would let any
+             parent read any family's account by walking ids. The parent dashboard already shows each
+             child's fees through a path that is scoped.</item>
+             </list>
+             The fee-type list stays AllSchoolUsers: it is a price list, not anyone's account.
+             </summary>
+        </member>
+        <member name="F:SchoolManagment.API.Controllers.FeesController.MaxLedgerDays">
+            <summary>The longest ledger window one request may ask for.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.CreateFeeType(SchoolManagment.Models.DTOs.Fees.FeeTypeCreateDTO)">
+            <summary>
+            Create a fee type.
+            </summary>
+            <remarks>
+            A name that matches a previously deleted fee type revives that row with the new
+            description and default, rather than failing on the unique name.
+            </remarks>
+            <response code="200">Created; <c>data.feeTypeId</c> is its id</response>
+            <response code="400">Invalid, or a fee type with this name already exists</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.UpdateFeeType(System.Int32,SchoolManagment.Models.DTOs.Fees.FeeTypeCreateDTO)">
+            <summary>
+            Rename a fee type or change its description or default amount.
+            </summary>
+            <remarks>
+            The default applies to fees billed from now on. Fees already billed keep their amount,
+            because rewriting them would change what students have already been invoiced.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.DeleteFeeType(System.Int32)">
+            <summary>
+            Delete (deactivate) a fee type.
+            </summary>
+            <remarks>
+            Refused while any active fee references it — including fees that are fully paid. A fee
+            type that has ever been billed and paid can therefore never be deleted; cancelling the
+            unpaid fees is the most that can be done.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetFeeTypes">
+            <summary>
+            Every active fee type in the school, by name.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetFeeTypeById(System.Int32)">
+            <summary>
+            One active fee type.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetStudentFees(System.Int32)">
+            <summary>
+            Every active fee billed to one student, newest period first, with paid and balance.
+            </summary>
+            <param name="studentId">Students.Id</param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.AssignFeesToStudent(System.Int32,SchoolManagment.Models.DTOs.Fees.StudentFeeAssignDTO)">
+            <summary>
+            Bill one or more fees to a student.
+            </summary>
+            <remarks>
+            A fee for a type and billing period the student already has is skipped, not duplicated,
+            as are rows with an inactive fee type or an out-of-range period. A 200 with a non-zero
+            <c>feesSkipped</c> is a partial success.
+            </remarks>
+            <param name="studentId">Students.Id</param>
+            <param name="request">The fees to bill</param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.AssignFeeToClass(System.Int32,SchoolManagment.Models.DTOs.Fees.ClassFeeAssignDTO)">
+            <summary>
+            Bill one fee to every active student in a class.
+            </summary>
+            <remarks>
+            Students already billed this type for this period are skipped and counted.
+            </remarks>
+            <param name="classId">Classes.Id</param>
+            <param name="request">The fee to bill</param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetFeeDetails(System.Int32)">
+            <summary>
+            One fee, with the student it is billed to and its paid and balance figures.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.UpdateFee(System.Int32,SchoolManagment.Models.DTOs.Fees.FeeUpdateDTO)">
+            <summary>
+            Correct a fee's amount or due date.
+            </summary>
+            <remarks>
+            Refused below what has already been paid against it. Audited as <c>Fee.Update</c> with
+            the old and new values.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.CancelFee(System.Int32)">
+            <summary>
+            Cancel a fee billed by mistake.
+            </summary>
+            <remarks>
+            Refused while any completed payment stands against it: refund those first. The fee is
+            deactivated, not erased, and billing the same type and period again revives it.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.MakeFeePayment(SchoolManagment.Models.DTOs.Fees.FeePaymentCreateDTO)">
+             <summary>
+             Record a payment received against one fee.
+             </summary>
+             <remarks>
+             Always recorded as <c>Completed</c>, dated today, with the signed-in user as the cashier.
+             Refused above the outstanding balance.
+            
+             <b>Not idempotent.</b> This is an insert, and nothing on the request identifies a retry,
+             so a double-submitted form records two payments. The balance cap bounds the damage — a
+             second full payment is refused as "already paid in full" — but a second partial payment
+             is accepted. The client must not resubmit on a timeout without checking the history.
+             </remarks>
+             <response code="200">Recorded; <c>data.receiptNumber</c> is the printed receipt number</response>
+             <response code="400">Invalid, or refused (over the balance, fee not found)</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetPayments(System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>
+            The school's payment ledger for a date range, newest first.
+            </summary>
+            <remarks>
+            Both dates are required and inclusive, on the payment date, and the window may not exceed
+            366 days — the ledger is unpaged. Refunded payments are included; they are part of it.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.RefundPayment(System.Int32,SchoolManagment.Models.DTOs.Fees.RefundRequestDTO)">
+            <summary>
+            Refund a completed payment.
+            </summary>
+            <remarks>
+            The payment is marked <c>Refunded</c>, not deleted, so its receipt number stays in the
+            ledger; it stops counting toward every balance. The reason replaces the payment's
+            remarks. Audited as <c>Fee.Refund</c>. There is no way to reverse a refund.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetPaymentHistory(System.Int32,System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>
+            Every payment against one student's fees, newest first, including refunds.
+            </summary>
+            <param name="studentId">Students.Id</param>
+            <param name="startDate">Optional, inclusive, on the payment date</param>
+            <param name="endDate">Optional, inclusive</param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetReceipt(System.String)">
+            <summary>
+            Everything needed to print one receipt, by its receipt number.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetOutstandingFees(System.Nullable{System.Int32},System.Nullable{System.Int32},System.Boolean)">
+            <summary>
+            Every unpaid fee, soonest due first, optionally for one class or fee type.
+            </summary>
+            <remarks>
+            Includes students who have left the school, flagged by <c>studentIsActive</c>: they still
+            owe the money, and the dashboard's outstanding total counts them.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.FeesController.GetFeeCollectionSummary(System.Nullable{System.Int32})">
+            <summary>
+            Billed, collected and outstanding per billing period, newest first.
+            </summary>
+            <remarks>
+            Grouped by the fee's billing month, not the payment date — a March fee paid in May is
+            collected in March here. Omit <c>feeYear</c> for every year.
+            </remarks>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.ParentsController">
+            <summary>
+            Parent management endpoints
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.RegisterParent(SchoolManagment.Models.DTOs.Parents.ParentRegistrationDTO)">
+            <summary>
+            Register a new parent
+            </summary>
+            <param name="request">Parent registration details</param>
+            <returns>Registration result with credentials</returns>
+            <response code="201">Parent registered successfully</response>
+            <response code="400">Invalid request or registration failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetAllParents(System.Boolean)">
+            <summary>
+            Get all parents
+            </summary>
+            <param name="includeInactive">Include deactivated parents (optional)</param>
+            <returns>List of parents</returns>
+            <response code="200">Parents retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetParentById(System.Int32)">
+            <summary>
+            Get parent by ID
+            </summary>
+            <param name="parentId">Parent ID</param>
+            <returns>Parent details</returns>
+            <response code="200">Parent found</response>
+            <response code="404">Parent not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetParentProfile(System.Int32)">
+            <summary>
+            Get parent profile with children
+            </summary>
+            <param name="userId">User ID of the parent</param>
+            <returns>Parent profile with children details</returns>
+            <response code="200">Profile retrieved successfully</response>
+            <response code="404">Parent not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetMyProfile">
+            <summary>
+            Get current parent's own profile
+            </summary>
+            <returns>Parent profile with children</returns>
+            <response code="200">Profile retrieved successfully</response>
+            <response code="404">Parent not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.UpdateParent(System.Int32,SchoolManagment.Models.DTOs.Parents.ParentUpdateDTO)">
+            <summary>
+            Update parent details
+            </summary>
+            <param name="parentId">Parent ID</param>
+            <param name="request">Updated parent details</param>
+            <returns>Update result</returns>
+            <response code="200">Parent updated successfully</response>
+            <response code="400">Invalid request or update failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.DeleteParent(System.Int32)">
+            <summary>
+            Delete parent (soft delete)
+            </summary>
+            <param name="parentId">Parent ID</param>
+            <returns>Delete result</returns>
+            <response code="200">Parent deleted successfully</response>
+            <response code="400">Delete failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.LinkStudentParent(SchoolManagment.Models.DTOs.Parents.LinkStudentParentDTO)">
+            <summary>
+            Link a parent to a student
+            </summary>
+            <param name="request">Link details (studentId, parentId, relationship)</param>
+            <returns>Link result</returns>
+            <response code="200">Parent linked to student successfully</response>
+            <response code="400">Invalid request or linking failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.UnlinkStudentParent(SchoolManagment.Models.DTOs.Parents.UnlinkStudentParentDTO)">
+            <summary>
+            Unlink a parent from a student
+            </summary>
+            <param name="request">Unlink details (studentId, parentId)</param>
+            <returns>Unlink result</returns>
+            <response code="200">Parent unlinked from student successfully</response>
+            <response code="400">Unlinking failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetParentsByStudent(System.Int32)">
+            <summary>
+            Get all parents for a specific student
+            </summary>
+            <param name="studentId">Student ID</param>
+            <returns>List of parents</returns>
+            <response code="200">Parents retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ParentsController.GetChildrenByParent(System.Int32)">
+            <summary>
+            Get all children for a specific parent
+            </summary>
+            <param name="parentId">Parent ID</param>
+            <returns>List of children</returns>
+            <response code="200">Children retrieved successfully</response>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.ResultsController">
+             <summary>
+             Results and grade management endpoints.
+            
+             Every action now carries <c>[RequiresPermission]</c>. It carried none before — the third such
+             controller after Attendance and Examinations, and the last of them, so <c>Results</c> was a
+             column in the seeded permission grid that nothing read. An administrator who took
+             <c>Results:Create</c> away from the Teacher role saw no change in behaviour.
+            
+             Two things to know about what these four endpoints can and cannot express.
+            
+             <b>There is no way to delete a mark.</b> Both writes are upserts whose MERGE has no DELETE
+             branch, so a mark entered against the wrong student can be corrected but not withdrawn.
+             Deleting the examination is the only way to remove results, and that withdraws all of them.
+            
+             <b>A student cannot read their own results.</b> The seeded grid grants Student and Parent
+             <c>Results:View</c>, and <c>GET student/{studentId}</c> takes a <c>Students.Id</c> that
+             appears on no token and is returned by no endpoint they can call. There is no
+             <c>my-results</c>. The permission is real and unusable.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ResultsController.AddOrUpdateResult(SchoolManagment.Models.DTOs.Results.ResultEntryDTO)">
+            <summary>
+            Add or update a single student result.
+            </summary>
+            <remarks>
+            Leave <c>grade</c> null. The procedure derives the letter from the school's own
+            thresholds via <c>fn_CalculateGrade</c>; supplying one overrides that school's scale for
+            this mark alone.
+            </remarks>
+            <param name="request">Result entry details</param>
+            <response code="200">Result saved successfully</response>
+            <response code="400">Invalid request, or the procedure refused it</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ResultsController.BulkGradeEntry(SchoolManagment.Models.DTOs.Results.BulkGradeEntryDTO)">
+             <summary>
+             Bulk grade entry for a whole class.
+             </summary>
+             <remarks>
+             Entries whose student is not in the examination's class, or whose marks fall outside
+             0..MaxMarks, are skipped and counted rather than aborting the batch — so a 200 here does
+             not mean everything was written. Read <c>entriesSkipped</c>.
+            
+             Omitting a student is how you leave them unmarked; there is no way to clear a mark.
+             </remarks>
+             <param name="request">Bulk grade entry data</param>
+             <response code="200">The batch ran. Check the counts.</response>
+             <response code="400">Invalid request, or the procedure refused the whole batch</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ResultsController.GetStudentResults(System.Int32)">
+             <summary>
+             Every mark one student has been given, newest examination first.
+             </summary>
+             <remarks>
+             <paramref name="studentId"/> is <c>Students.Id</c>, not <c>Users.Id</c> and not the
+             school's admission number.
+            
+             Gated on <c>Results:View</c>, which is stricter than the bare <c>[Authorize]</c> this
+             carried before — any signed-in account could read any student's full academic record by
+             walking the ids. It is still school-wide rather than per-student: a teacher or parent
+             holding the permission can read any student in the school, because nothing here consults
+             <c>StudentParents</c> or the teacher's assignments. Closing that needs a procedure change.
+             </remarks>
+             <param name="studentId">Students.Id</param>
+             <response code="200">Results retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ResultsController.GetStudentsForGradeEntry(System.Int32,System.Int32,System.Nullable{System.Int32})">
+             <summary>
+             The class roll for one examination, with any marks already entered — the feed for the
+             grade-entry screen.
+             </summary>
+             <remarks>
+             Now <c>AdminOrTeacher</c>. It was <c>[Authorize(Roles = Teacher)]</c>, which locked an
+             administrator out of the only screen the API offers for entering a class's marks even
+             though <c>POST bulk</c> accepts their submission — they could save marks they had no way
+             to load. A teacher is still held to their <c>TeacherSubjectAssignments</c> rows and gets
+             a 403; an administrator bypasses that check, having no such rows to satisfy.
+            
+             An empty array means the roll is empty, or that no active examination matches this class
+             and subject. It no longer means "you are not allowed" — that is the 403, and the two used
+             to be the same response.
+             </remarks>
+             <param name="subjectId">Subject ID</param>
+             <param name="classId">Class ID</param>
+             <param name="examinationId">Examination ID. Omit for the most recent in this class and subject.</param>
+             <response code="200">Students retrieved successfully</response>
+             <response code="403">This teacher is not assigned to the subject and class</response>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.RolesController">
+             <summary>
+             Roles and their permission grids. Roles are global -- there is no school in
+             any of these routes, because one set of roles serves the whole platform.
+            
+             Reads are guarded by the Roles module's own permissions -- the seeded
+             Admin holds Roles:View, which the Users screen's role-change dialog needs.
+            
+             Every write is SuperAdminOnly as well (PHASE 14). The seeded grid gives
+             the school Admin Roles Create and Edit, and because roles are global that
+             let one school's admin rewrite the Teacher grid of every school, or grant
+             its own role Roles:Delete and remove another school's custom role. The
+             permission attributes stay, so the grid can still narrow a SuperAdmin
+             -- except that PermissionAuthorizationHandler short-circuits role 1.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.WriteFailure(System.String)">
+            <summary>
+            The procedures report every refusal as 'Error: ...'. "not found" is a
+            404, a name or code already taken and a role still held are 409s, and
+            the rest -- system-role and SuperAdmin-grid refusals -- stay 400.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.GetRoles(System.Boolean)">
+            <summary>
+            The role list, each with how many users hold it and how many modules it
+            grants.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.GetRoleById(System.Int32)">
+            <summary>One role with its full permission grid.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.GetModules">
+            <summary>
+            The module names a permission can be granted on. Served from
+            Constants.Modules so a UI does not have to hard-code the list.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.GetMyPermissions">
+            <summary>
+            The signed-in user's own grid, read live rather than from their token.
+            Deliberately needs no Roles permission: everybody may ask what they
+            themselves can do.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.GetRolePermissions(System.Int32)">
+            <summary>One role's permission grid.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.CreateRole(SchoolManagment.Models.DTOs.Roles.RoleCreateDTO)">
+            <summary>
+            Create a custom role. Its id is allocated from 100 upward -- 1 to 5 are
+            reserved for the system roles the database refers to by number.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.UpdateRole(System.Int32,SchoolManagment.Models.DTOs.Roles.RoleUpdateDTO)">
+            <summary>
+            Rename or deactivate a role. The five system roles cannot be renamed;
+            the database refuses it.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.DeleteRole(System.Int32)">
+            <summary>
+            Delete a custom role. Refused while any user still holds it, and
+            refused outright for the system roles.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.SaveRolePermission(System.Int32,SchoolManagment.Models.DTOs.Roles.RolePermissionSaveDTO)">
+            <summary>
+            Grant or revoke one module for one role. Granting create, edit or delete
+            implies view -- the database will not store the contradiction.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.SaveRolePermissions(System.Int32,System.Collections.Generic.List{SchoolManagment.Models.DTOs.Roles.RolePermissionSaveDTO})">
+            <summary>
+            Save several modules at once -- what a permissions screen sends when the
+            user hits save. Stops at the first refusal and says how many were
+            applied, because the writes are not one transaction.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.RolesController.DeleteRolePermission(System.Int32,System.String)">
+            <summary>
+            Remove a module from a role entirely. Distinct from saving it with all
+            four flags off: both deny, but only one records that somebody meant to.
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.ScheduleController">
+             <summary>
+             The teaching timetable: one row per lesson (teacher, subject, class, weekday, start and end,
+             optional room), read by teacher or by class.
+            
+             Reworked in Phase 13. The procedures were sound; this layer was not. It is the fifth
+             controller found carrying no <c>[RequiresPermission]</c> (every action has one now), its
+             writes were <c>Roles = Admin</c> (so SuperAdmin, who passes every other AdminOnly gate, was
+             refused), and every refusal was a 400, so a client could not tell "that slot is taken"
+             from "that teacher does not exist".
+            
+             <b>Status codes on a write:</b> 409 when the slot clashes, with <c>Data.ConflictWith</c>
+             set to the entry in the way and the message naming it; 404 when the entry being edited or
+             deleted is not in this school; 400 for everything else.
+            
+             <b>Reads are AdminOrTeacher.</b> The seeded grid gives Student and Parent
+             <c>Schedule:View</c>, but every read here takes a teacher or class id and nothing
+             resolves "my class" or "my child's class", so opening them would let a student page
+             through every class's timetable by id and still not tell them which one is theirs. Any
+             teacher can read any teacher's week, as they can in a staff room.
+            
+             Times travel as <c>TimeSpan</c>, which System.Text.Json writes and reads as "HH:mm:ss".
+             The <c>*Formatted</c> strings come from SQL <c>FORMAT</c> and follow the server's
+             culture; clients should format the TimeSpan themselves.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.WriteFailure(SchoolManagment.Models.DTOs.Schedule.ScheduleOperationResponseDTO,System.Boolean)">
+            <summary>Turns a refused write into 409, 404 or 400.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.CreateScheduleEntry(SchoolManagment.Models.DTOs.Schedule.ScheduleEntryCreateDTO)">
+            <summary>
+            Create a schedule entry.
+            </summary>
+            <response code="201">Created; Data.Id is the new entry</response>
+            <response code="400">Invalid, or a teacher / subject / class that is not in this school</response>
+            <response code="409">The teacher, the class or the room is already busy in that slot</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.UpdateScheduleEntry(System.Int32,SchoolManagment.Models.DTOs.Schedule.ScheduleEntryCreateDTO)">
+            <summary>
+            Replace a schedule entry.
+            </summary>
+            <remarks>
+            The id is in the route; the body is the same shape as create. It used to be a PUT to the
+            collection with the id in the body.
+            </remarks>
+            <response code="200">Updated</response>
+            <response code="400">Invalid, or a teacher / subject / class that is not in this school</response>
+            <response code="404">No active entry with this id in this school</response>
+            <response code="409">The new slot clashes with another entry</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.GetTeacherSchedule(System.Int32)">
+            <summary>
+            A teacher's whole week, Monday first.
+            </summary>
+            <param name="teacherId">Teachers.Id (not the user id)</param>
+            <remarks>An unknown teacher and a teacher with no lessons both return an empty list.</remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.GetTeacherScheduleByDay(System.Int32,System.Int32)">
+            <summary>
+            A teacher's lessons on one weekday (1 = Monday .. 7 = Sunday).
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.GetTeacherCurrentAndNextClasses(System.Int32)">
+            <summary>
+            The lesson a teacher is in now, and the next one (wrapping into next week).
+            </summary>
+            <remarks>
+            "Now" is the database server's clock and time zone, not the caller's.
+            Either may be null.
+            </remarks>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.GetTeacherScheduleStats(System.Int32)">
+            <summary>
+            Counts for a teacher's week: lessons, subjects, classes, days, first and last times.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.GetClassSchedule(System.Int32,System.Nullable{System.Int32})">
+            <summary>
+            A class's timetable, optionally one weekday.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.ScheduleController.DeleteScheduleEntry(System.Int32)">
+            <summary>
+            Remove a schedule entry (soft delete).
+            </summary>
+            <response code="200">Removed</response>
+            <response code="404">No active entry with this id in this school</response>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.SchoolsController">
+             <summary>
+             Tenant administration -- the platform side of the system, and the only
+             controller here that addresses a school by id instead of taking it from the
+             caller's token.
+            
+             That makes authorisation two-layered, and both layers matter:
+            
+               * The Schools module's permission grid decides whether the caller may read
+                 or write schools at all. The seed gives an Admin view and edit but not
+                 create or delete, which is exactly "may see and maintain my own school".
+               * Cross-tenant actions -- listing every school, platform statistics, the
+                 usage report, suspending a tenant, switching into one -- additionally
+                 require the SuperAdmin role, because Schools:View alone is held by every
+                 school admin and would otherwise expose the whole tenant list to them.
+            
+             Actions that name a school and are reachable by a school admin are confined
+             by SchoolService, which refuses any id but the caller's own. Both checks are
+             kept: the role guard here gives the right status code, the service guard is
+             the one that actually holds.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetSchools(System.String,System.Nullable{System.Boolean},System.Int32,System.Int32)">
+            <summary>
+            Every tenant, with its headline counts. Platform administrators only.
+            </summary>
+            <param name="searchTerm">Matches school name, code or city</param>
+            <param name="isActive">Filter by active status (optional)</param>
+            <param name="page">Page number (default: 1)</param>
+            <param name="pageSize">Page size (default: 20, max: 100)</param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetCurrentSchool">
+             <summary>
+             The caller's own school. This is what a school admin's settings screen
+             reads; it needs no id, so it cannot be pointed at another tenant.
+            
+             404 for a platform administrator who is not currently acting inside a
+             school -- they have no "own school" to return.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetPlatformStats">
+            <summary>Totals across every tenant. Platform administrators only.</summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetUsageReport(System.Nullable{System.DateTime},System.Nullable{System.DateTime})">
+            <summary>
+            Per-tenant activity over a window, for billing or capacity work. Defaults
+            to the last 30 days. Platform administrators only.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetBranding(System.Nullable{System.Int32},System.String)">
+            <summary>
+            Public branding for one school, by id or by code. Anonymous on purpose:
+            the React app calls this to theme the login page before anybody has
+            signed in, so it returns only name, logo, colour and whether the school
+            is suspended -- never contact details or counts.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetBySubdomain(System.String)">
+            <summary>
+            Resolves a wildcard host's leading label to a tenant, returning the same
+            public branding subset. Anonymous, for the same reason.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetSchoolByCode(System.String)">
+            <summary>
+            One tenant by code. Platform administrators only -- unlike the branding
+            endpoints, this returns the full record.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.GetSchoolById(System.Int32)">
+            <summary>
+            One tenant by id. A school admin may read only their own; any other id is
+            404 rather than 403, so probing ids reveals nothing about which other
+            tenants exist.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.CreateSchool(SchoolManagment.Models.DTOs.Schools.SchoolCreateDTO)">
+             <summary>
+             Onboards a tenant. One transaction creates the school, its first admin,
+             the number sequences, the default fee types, the default settings and --
+             unless turned off -- a starter subject list for grades 1-12.
+            
+             The admin's username is generated as CODE_ADMIN and returned, because the
+             caller has no other way to learn it. Omit adminPassword and the account
+             gets the shared temporary password and must change it at first login,
+             which is the normal path.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.UpdateSchool(System.Int32,SchoolManagment.Models.DTOs.Schools.SchoolUpdateDTO)">
+            <summary>
+            Partial update -- omitted fields keep their stored value. A school admin
+            may update only their own school; SchoolCode cannot be changed at all,
+            because it is embedded in every username and admission number already
+            issued.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.UpdateSchoolStatus(System.Int32,SchoolManagment.Models.DTOs.Schools.SchoolStatusUpdateDTO)">
+             <summary>
+             Suspends or restores a tenant. Platform administrators only -- deliberately
+             not available to a school's own admin, who would be locking every one of
+             their users out at once.
+            
+             Suspending also revokes the school's refresh tokens, so its staff are
+             signed out rather than lingering on valid tokens.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.CreateSchoolAdmin(System.Int32,SchoolManagment.Models.DTOs.Schools.SchoolAdminCreateDTO)">
+             <summary>
+             Adds a further admin to an existing school -- the first one comes with the
+             school itself. The username is generated as CODE_ADMIN2, CODE_ADMIN3 and
+             so on unless one is supplied, and is returned either way.
+            
+             Omit the password and the account gets the shared temporary password with
+             a forced change at first login.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.SwitchSchool(System.Int32)">
+             <summary>
+             Enters a school as a platform administrator: reissues the access token
+             with that tenant's school_id on it, so anything reading the school from
+             the token -- ITenantContext, and therefore every repository below it --
+             sees the school instead of nothing.
+            
+             Two limits, both real:
+            
+               * Only the access token is replaced. The refresh token is untouched and
+                 knows nothing of the switch, so the scope lasts until the access
+                 token expires; a client that wants to stay inside the school must
+                 call this again after refreshing.
+               * Scope is not the same as access. The other modules guard their
+                 actions with [Authorize(Roles = "Admin")] and the AdminOrTeacher /
+                 AllSchoolUsers policies, none of which name SuperAdmin -- so a
+                 switched platform administrator still gets 403 from Students,
+                 Classes, Teachers and the rest. What the switch currently buys is a
+                 correctly scoped token for the endpoints SuperAdmin may already
+                 reach. Letting a platform administrator work inside a tenant's
+                 modules means adding SuperAdmin to those role guards, which is a
+                 change to the authorisation of eleven other controllers and is not
+                 made here.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SchoolsController.ExitSwitch">
+            <summary>
+            Leaves the school again and returns to platform scope, by reissuing an
+            access token with no school on it.
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.SettingsController">
+             <summary>
+             The school's own configuration: sixty-four seeded rows across six categories,
+             keyed by (category, settingKey) within the tenant.
+            
+             A setting is addressed by its category and key, never by its numeric id.
+             That is not a stylistic choice -- sp_ResetSettings deletes the rows and
+             re-seeds them, so ids do not survive a reset, and every write procedure is
+             written against the pair anyway.
+            
+             Authorisation is the permission grid alone, with no role guard on top. The
+             seed gives Settings to SuperAdmin and Admin and to nobody else, so that is
+             already the narrow answer; adding [Authorize(Roles = "Admin")] as well would
+             lock out a platform administrator who has switched into the school, which is
+             exactly when they need it. The one exception is the grading scale below, which
+             is read against the Results module instead.
+            
+             Every action is confined to the school named in the caller's token. Nothing
+             here accepts a school id, so there is no cross-tenant surface to guard.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.GetSettings(System.String)">
+             <summary>
+             Every active setting for the school, optionally narrowed to one category.
+            
+             Returned flat rather than grouped, and unpaged: sixty-four rows is one
+             screen's worth, and a settings form wants all of them at once.
+             </summary>
+             <param name="category">
+             One of SystemConfiguration, UserManagement, AcademicSettings,
+             SecuritySettings, NotificationSettings, SystemInformation -- or any other
+             category the school has added. Unknown categories return an empty list.
+             </param>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.GetGradeThresholds">
+             <summary>
+             The school's grading scale, as fn_CalculateGrade applies it -- the bands in
+             the order they are tested, plus F for whatever falls below the last one.
+            
+             Guarded on Results:View, not Settings:View, and deliberately: the seeded
+             grid gives Settings to administrators only, but a teacher marking papers and
+             a parent reading a report card both need to know what turns 83% into a B.
+             Everyone who may see a grade may see the scale that produced it.
+            
+             isDefault marks a band whose setting is missing or not a number, where the
+             value shown is the function's own fallback rather than anything the school
+             chose.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.GetSetting(System.String,System.String)">
+            <summary>
+            One setting. 404 covers both "no such key" and "deleted", because the read
+            procedure filters on IsActive and cannot tell them apart.
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.CreateSetting(SchoolManagment.Models.DTOs.Settings.SettingSaveDTO)">
+             <summary>
+             Adds a setting the seed does not define, or brings back one that was
+             deleted -- the row is soft-deleted, so writing over it revives it, and the
+             response says which of the two happened.
+            
+             409 when an active setting with that category and key already exists.
+             sp_SaveSetting would have overwritten it; refusing is what keeps
+             Settings:Create from doubling as Settings:Edit.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.UpdateSetting(System.String,System.String,SchoolManagment.Models.DTOs.Settings.SettingValueUpdateDTO)">
+             <summary>
+             Changes a setting's value, and its type if one is supplied. Omitted fields
+             keep what is stored, so a form that only knows about values cannot blank out
+             a description.
+            
+             404 when the setting does not exist: creating one is a POST, which needs
+             Settings:Create.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.SaveSettings(SchoolManagment.Models.DTOs.Settings.SettingsBulkSaveDTO)">
+             <summary>
+             Saves a whole settings form in one transaction.
+            
+             A row the procedure cannot store is skipped rather than failing the batch,
+             so a success here does not mean everything was written: read settingsSaved
+             and settingsSkipped, and show the skipped list -- it names each dropped key
+             and says whether the value did not match its type or the key was sent twice.
+             A bare success toast over this response would hide discarded input.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.DeleteSetting(System.String,System.String)">
+             <summary>
+             Soft-deletes a setting: it disappears from every read, and a POST of the
+             same category and key brings it back with its history intact.
+            
+             The six gradeThreshold* settings in AcademicSettings are refused, because
+             fn_CalculateGrade reads them without filtering on IsActive -- a deleted
+             threshold would vanish from this API while still deciding grades.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SettingsController.ResetSettings(SchoolManagment.Models.DTOs.Settings.SettingsResetDTO)">
+             <summary>
+             Restores the seeded defaults. Destructive in a way the other endpoints are
+             not: the rows in scope are hard-deleted and rewritten, so customised values
+             are gone for good, not deactivated.
+            
+             Omitting the category resets all six of them. Naming one that has no rows is
+             a 404 rather than a silent no-op, so a mistyped category cannot look like a
+             successful reset.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.RegisterStudent(SchoolManagment.Models.DTOs.Students.StudentRegistrationDTO)">
+            <summary>
+            Register a new student (Admin only)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.GetAllStudents(System.Nullable{System.Int32},System.Nullable{System.Boolean},System.String,System.Int32,System.Int32)">
+            <summary>
+            Get all students (paginated, with filters) - Admin/Teacher
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.GetStudentById(System.Int32)">
+            <summary>
+            Get student by ID - Admin/Teacher/Self
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.GetStudentProfile(System.Int32)">
+            <summary>
+            Get student profile with stats - Admin/Teacher/Self
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.UpdateStudent(System.Int32,SchoolManagment.Models.DTOs.Students.StudentUpdateDTO)">
+            <summary>
+            Update student details - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.DeleteStudent(System.Int32)">
+            <summary>
+            Delete student - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.PromoteStudent(System.Int32,SchoolManagment.Models.DTOs.Students.StudentPromoteDTO)">
+            <summary>
+            Promote student to next class - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.AssignSubjectsToStudent(System.Int32,SchoolManagment.Models.DTOs.Students.StudentSubjectAssignmentDTO)">
+            <summary>
+            Assign subjects to student - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.GetStudentSubjects(System.Int32)">
+            <summary>
+            Get student's subjects - Admin/Teacher/Self
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.RemoveStudentSubject(System.Int32,System.Int32)">
+            <summary>
+            Remove subject from student - Admin only
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.StudentsController.GetStudentsByClass(System.Int32)">
+            <summary>
+            Get students by class ID - Admin/Teacher
+            </summary>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.SubjectsController">
+            <summary>
+            Subject management endpoints
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.CreateSubject(SchoolManagment.Models.DTOs.Subjects.SubjectCreateDTO)">
+            <summary>
+            Create a new subject
+            </summary>
+            <param name="request">Subject details</param>
+            <returns>Created subject ID</returns>
+            <response code="201">Subject created successfully</response>
+            <response code="400">Invalid request</response>
+            <response code="401">Unauthorized</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.GetAllSubjects(System.String,System.Nullable{System.Boolean},System.Int32,System.Int32)">
+            <summary>
+            Get all subjects with pagination and filters
+            </summary>
+            <param name="grade">Filter by grade (optional)</param>
+            <param name="isActive">Filter by active status (optional)</param>
+            <param name="page">Page number (default: 1)</param>
+            <param name="pageSize">Page size (default: 20, max: 100)</param>
+            <returns>Paginated list of subjects</returns>
+            <response code="200">Subjects retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.GetSubjectById(System.Int32)">
+            <summary>
+            Get subject by ID
+            </summary>
+            <param name="subjectId">Subject ID</param>
+            <returns>Subject details</returns>
+            <response code="200">Subject found</response>
+            <response code="404">Subject not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.GetSubjectsByGrade(System.String)">
+            <summary>
+            Get subjects by grade
+            </summary>
+            <param name="grade">Grade (e.g., "10", "11", "12")</param>
+            <returns>List of subjects for the specified grade</returns>
+            <response code="200">Subjects retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.UpdateSubject(System.Int32,SchoolManagment.Models.DTOs.Subjects.SubjectUpdateDTO)">
+            <summary>
+            Update subject details
+            </summary>
+            <param name="subjectId">Subject ID</param>
+            <param name="request">Updated subject details</param>
+            <returns>Update result</returns>
+            <response code="200">Subject updated successfully</response>
+            <response code="400">Invalid request or update failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.UpdateSubjectStatus(System.Int32,SchoolManagment.Models.DTOs.Subjects.SubjectStatusUpdateDTO)">
+            <summary>
+            Update subject active status
+            </summary>
+            <param name="subjectId">Subject ID</param>
+            <param name="request">Status update</param>
+            <returns>Update result</returns>
+            <response code="200">Status updated successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.SubjectsController.DeleteSubject(System.Int32)">
+            <summary>
+            Delete subject
+            </summary>
+            <param name="subjectId">Subject ID</param>
+            <returns>Delete result</returns>
+            <response code="200">Subject deleted successfully</response>
+            <response code="400">Delete failed</response>
+        </member>
+        <member name="T:SchoolManagment.API.Controllers.TeachersController">
+            <summary>
+            Teacher management endpoints
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.RegisterTeacher(SchoolManagment.Models.DTOs.Teachers.TeacherRegistrationDTO)">
+            <summary>
+            Register a new teacher
+            </summary>
+            <param name="request">Teacher registration details</param>
+            <returns>Registration result with credentials</returns>
+            <response code="201">Teacher registered successfully</response>
+            <response code="400">Invalid request or registration failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetAllTeachers(System.Nullable{System.Int32})">
+            <summary>
+            Get all teachers with optional subject filter
+            </summary>
+            <param name="subjectId">Filter by subject ID (optional)</param>
+            <returns>List of teachers</returns>
+            <response code="200">Teachers retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetTeacherProfile(System.Int32)">
+            <summary>
+            Get teacher profile with statistics
+            </summary>
+            <param name="userId">User ID of the teacher</param>
+            <returns>Teacher profile with stats</returns>
+            <response code="200">Profile retrieved successfully</response>
+            <response code="404">Teacher not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetMyProfile">
+            <summary>
+            Get current teacher's own profile
+            </summary>
+            <returns>Teacher profile with stats</returns>
+            <response code="200">Profile retrieved successfully</response>
+            <response code="404">Teacher not found</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.UpdateTeacher(System.Int32,SchoolManagment.Models.DTOs.Teachers.TeacherUpdateDTO)">
+            <summary>
+            Update teacher details (Admin)
+            </summary>
+            <param name="teacherId">Teacher ID (Teachers table ID, not User ID)</param>
+            <param name="request">Updated teacher details</param>
+            <returns>Update result</returns>
+            <response code="200">Teacher updated successfully</response>
+            <response code="400">Invalid request or update failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.UpdateMyProfile(SchoolManagment.Models.DTOs.Teachers.TeacherUpdateDTO)">
+            <summary>
+            Update own profile (Teacher self-service)
+            </summary>
+            <param name="request">Updated profile details</param>
+            <returns>Update result</returns>
+            <response code="200">Profile updated successfully</response>
+            <response code="400">Invalid request or update failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.DeleteTeacher(System.Int32)">
+            <summary>
+            Delete teacher (soft delete)
+            </summary>
+            <param name="teacherId">Teacher ID (Teachers table ID, not User ID)</param>
+            <returns>Delete result</returns>
+            <response code="200">Teacher deleted successfully</response>
+            <response code="400">Delete failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.AssignSubjectsToTeacher(System.Int32,SchoolManagment.Models.DTOs.Teachers.TeacherSubjectAssignmentDTO)">
+             <summary>
+             Replace the teacher's subject set.
+            
+             Not additive: sp_AssignSubjectsToTeacher deactivates every link absent from the
+             list, so an empty list clears them all. TeacherSubjectAssignmentDTO carries no
+             [MinLength(1)], which is what makes "teaches nothing" expressible here -- unlike
+             the student equivalent, where it is not.
+             </summary>
+             <param name="teacherId">Teacher ID (Teachers table ID)</param>
+             <param name="request">The complete list of subject IDs the teacher should hold</param>
+             <returns>Assignment result with the surviving count</returns>
+             <response code="200">Subjects assigned successfully</response>
+             <response code="400">Invalid request or assignment failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetTeacherSubjects(System.Int32)">
+            <summary>
+            Get teacher's assigned subjects
+            </summary>
+            <param name="teacherId">Teacher ID (Teachers table ID)</param>
+            <returns>List of assigned subjects</returns>
+            <response code="200">Subjects retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetTeacherClasses(System.Int32)">
+            <summary>
+            Get teacher's assigned classes
+            </summary>
+            <param name="teacherId">Teacher ID (Teachers table ID)</param>
+            <returns>List of assigned classes</returns>
+            <response code="200">Classes retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.GetTeacherSubjectAssignments(System.Int32)">
+            <summary>
+            Get teacher's subject-class assignments
+            </summary>
+            <param name="teacherId">Teacher ID (Teachers table ID)</param>
+            <returns>List of subject-class assignments</returns>
+            <response code="200">Assignments retrieved successfully</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.TeachersController.AssignTeacherToSubjectClass(SchoolManagment.Models.DTOs.Teachers.TeacherClassSubjectAssignmentDTO)">
+            <summary>
+            Assign teacher to teach a specific subject in a specific class
+            </summary>
+            <param name="request">Assignment details (teacherId, subjectId, classId)</param>
+            <returns>Assignment result</returns>
+            <response code="200">Assignment created successfully</response>
+            <response code="400">Invalid request or assignment failed</response>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.GetAllUsers(System.String,System.Nullable{System.Int32},System.Nullable{System.Boolean},System.String,System.Int32,System.Int32)">
+             <summary>
+             Get all users in the school. Requires view access to the Users module.
+            
+             Filter by role either as a name or code ("Teacher", "TEACHER") through
+             role, or by the exact dbo.Roles.Id through roleId. Prefer roleId: a role
+             can be renamed, its id cannot.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.GetUserById(System.Int32)">
+            <summary>
+            Get user by ID (Admin or Self)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.UpdateUser(System.Int32,SchoolManagment.Models.DTOs.Users.UserUpdateDTO)">
+            <summary>
+            Update user profile (Admin or Self - limited fields)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.UpdateUserStatus(System.Int32,SchoolManagment.Models.DTOs.Users.UserStatusUpdateDTO)">
+             <summary>
+             Update user active status. Requires edit access to the Users module.
+            
+             Sending isActive = true is the only way to reactivate an account anywhere in
+             the API: DELETE on Students, Teachers and Parents all deactivate and none of
+             those modules offers a way back. It restores the login, the person and the
+             role-specific row, but not the subject enrolments or parent links the delete
+             switched off -- those are re-established through their own modules.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.ChangeUserRole(System.Int32,SchoolManagment.Models.DTOs.Users.UserRoleUpdateDTO)">
+             <summary>
+             Change a user's role. Requires edit access to the Users module.
+            
+             Refused for students, teachers and parents: their role follows from the
+             Students / Teachers / Parents row that owns them, so moving the login
+             alone would leave the two disagreeing.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.DeleteUser(System.Int32)">
+             <summary>
+             Delete user. Requires delete access to the Users module.
+            
+             A soft delete that cascades into whichever role-specific rows the account
+             owns, and the most talkative procedure in the database: it refuses for admins,
+             for a teacher who still has an active class or any attendance history, and for
+             a student with attendance, results or fees. Eight distinct refusals with eight
+             different remedies, so the message is returned rather than summarised.
+             </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.GetProfilePicture(System.Int32)">
+            <summary>
+            Get user profile picture (Authenticated users)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.UploadProfilePicture(System.Int32,Microsoft.AspNetCore.Http.IFormFile)">
+            <summary>
+            Upload user profile picture (Admin or Self)
+            </summary>
+        </member>
+        <member name="M:SchoolManagment.API.Controllers.UsersController.DeleteProfilePicture(System.Int32)">
+            <summary>
+            Delete user profile picture (Admin or Self)
+            </summary>
+        </member>
+        <member name="T:Program">
+            <summary>
+            Auto-generated public partial Program class for top-level statement apps.
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Type)">
+            <summary>
+            Generates a documentation comment ID for a type.
+            Example: T:Namespace.Outer+Inner`1 becomes T:Namespace.Outer.Inner`1
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Reflection.PropertyInfo)">
+            <summary>
+            Generates a documentation comment ID for a property.
+            Example: P:Namespace.ContainingType.PropertyName or for an indexer P:Namespace.ContainingType.Item(System.Int32)
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Type,System.String)">
+            <summary>
+            Generates a documentation comment ID for a property given its container type and property name.
+            Example: P:Namespace.ContainingType.PropertyName
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.CreateDocumentationId(System.Reflection.MethodInfo)">
+            <summary>
+            Generates a documentation comment ID for a method (or constructor).
+            For example:
+              M:Namespace.ContainingType.MethodName(ParamType1,ParamType2)~ReturnType
+              M:Namespace.ContainingType.#ctor(ParamType)
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.GetTypeDocId(System.Type,System.Boolean,System.Boolean)">
+            <summary>
+            Generates a documentation ID string for a type.
+            This method handles nested types (replacing '+' with '.'),
+            generic types, arrays, pointers, by-ref types, and generic parameters.
+            The <paramref name="includeGenericArguments"/> flag controls whether
+            constructed generic type arguments are emitted, while <paramref name="omitGenericArity"/>
+            controls whether the generic arity marker (e.g. "`1") is appended.
+            </summary>
+        </member>
+        <member name="M:Microsoft.AspNetCore.OpenApi.Generated.DocumentationCommentIdHelper.NormalizeDocId(System.String)">
+            <summary>
+            Normalizes a documentation comment ID to match the compiler-style format.
+            Strips the return type suffix for ordinary methods but retains it for conversion operators.
+            </summary>
+            <param name="docId">The documentation comment ID to normalize.</param>
+            <returns>The normalized documentation comment ID.</returns>
+        </member>
+    </members>
+</doc>
