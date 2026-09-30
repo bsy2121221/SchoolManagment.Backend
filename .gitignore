@@ -1,0 +1,54 @@
+## .NET build outputs
+**/bin/
+**/obj/
+**/out/
+**/publish/
+
+## Visual Studio / Rider / VS Code
+.vs/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.rsuser
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+## NuGet
+**/packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## Test / coverage
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+coverage/
+*.coverage
+*.coveragexml
+
+## Logs & temp
+*.log
+*.tmp
+*.temp
+*.cache
+*.pidb
+*.svclog
+
+## OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+## Secrets / local overrides (keep Production tracked intentionally)
+appsettings.*.local.json
+*.local.json
+.env
+.env.*
