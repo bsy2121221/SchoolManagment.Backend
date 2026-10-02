@@ -171,7 +171,7 @@ builder.Services.AddCors(options =>
     // For production, use specific origins
     options.AddPolicy("Production", policy =>
     {
-        policy.WithOrigins("https://yourdomain.com", "https://api.yourdomain.com")
+        policy.WithOrigins("https://schoolmanagmentss.vercel.app")
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials();
