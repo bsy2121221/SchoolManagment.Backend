@@ -27,7 +27,7 @@ jobs:
         run: dotnet restore SchoolManagment.API/SchoolManagment.API.csproj -r win-x86
 
       - name: Publish for MonsterASP (win-x86)
-        run: dotnet publish SchoolManagment.API/SchoolManagment.API.csproj --configuration Release --output ./publish --runtime win-x86 --no-restore
+        run: dotnet publish SchoolManagment.API/SchoolManagment.API.csproj --configuration Release --output ./publish --runtime win-x86 --self-contained false --no-restore
 
       - name: Verify publish output
         run: dir publish
