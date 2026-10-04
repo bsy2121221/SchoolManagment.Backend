@@ -1,6 +1,8 @@
-name: Deploy ASP.NET Core 10 API to MonsterASP
+name: Deploy API to MonsterASP.NET
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,26 +15,52 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: windows-latest
+    env:
+      FTP_REMOTE_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Normalize FTP remote directory
+        shell: pwsh
+        run: |
+          $dir = $env:FTP_REMOTE_DIR
+          if ([string]::IsNullOrWhiteSpace($dir)) { $dir = "/wwwroot/" }
+          $dir = "/" + ($dir.Trim() -replace "\\", "/" -replace "^/+", "").TrimEnd("/") + "/"
+          "FTP_REMOTE_DIR=$dir" | Add-Content -Path $env:GITHUB_ENV
+          Write-Host "FTP remote directory: $dir"
+
       - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: "10.0.x"
 
-      - name: Restore dependencies (win-x86)
-        run: dotnet restore SchoolManagment.API/SchoolManagment.API.csproj -r win-x86
+      - name: Restore dependencies
+        run: dotnet restore SchoolManagment.API/SchoolManagment.API.csproj --runtime win-x86
 
       - name: Publish for MonsterASP (win-x86)
-        run: dotnet publish SchoolManagment.API/SchoolManagment.API.csproj --configuration Release --output ./publish --runtime win-x86 --self-contained false --no-restore
+        run: >
+          dotnet publish SchoolManagment.API/SchoolManagment.API.csproj
+          --configuration Release
+          --runtime win-x86
+          --self-contained false
+          --no-restore
+          --output ./publish
+          -p:EnvironmentName=Production
+          -p:DebugType=None
+          -p:DebugSymbols=false
 
-      - name: Verify publish output
-        run: dir publish
+      - name: Remove local-only publish files
+        shell: pwsh
+        run: |
+          Remove-Item ./publish/appsettings.Development.json -ErrorAction SilentlyContinue
+          Remove-Item ./publish/*.pdb -ErrorAction SilentlyContinue
+          if (-not (Test-Path ./publish/web.config)) {
+            throw "publish/web.config is missing. IIS will not start the ASP.NET Core site."
+          }
+          Get-ChildItem ./publish | Select-Object Name, Length | Format-Table -AutoSize
 
-      # IIS locks DLLs while the site runs. app_offline.htm stops the app before file replace.
       - name: Stage app_offline.htm
         shell: pwsh
         run: |
@@ -47,13 +75,14 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           local-dir: ./ftp-app-offline/
-          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          server-dir: ${{ env.FTP_REMOTE_DIR }}
           dangerous-clean-slate: false
           log-level: minimal
-          timeout: 120000
+          timeout: 180000
 
       - name: Wait for IIS to release file locks
-        run: powershell -Command "Start-Sleep -Seconds 20"
+        shell: pwsh
+        run: Start-Sleep -Seconds 20
 
       - name: Deploy to MonsterASP wwwroot
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
@@ -63,14 +92,14 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           local-dir: ./publish/
-          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          server-dir: ${{ env.FTP_REMOTE_DIR }}
           dangerous-clean-slate: false
           log-level: standard
-          timeout: 120000
+          timeout: 600000
           exclude: |
             **/*.pdb
             **/.ftp-deploy-sync-state.json
-           
+            **/appsettings.Development.json
 
       - name: Start site (remove app_offline.htm)
         shell: pwsh
@@ -78,8 +107,7 @@ jobs:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
         run: |
-          $dir = $env:FTP_SERVER_DIR.Trim().TrimEnd('/')
+          $dir = $env:FTP_REMOTE_DIR.Trim().TrimEnd('/')
           $remotePath = "$dir/app_offline.htm"
           & ./deploy/ftp-remove-file.ps1 -Server $env:FTP_SERVER -Username $env:FTP_USERNAME -Password $env:FTP_PASSWORD -RemotePath $remotePath
