@@ -1,49 +1,85 @@
-name: Deploy API to MonsterASP.NET
+name: Deploy ASP.NET Core 10 API to MonsterASP
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-monsterasp-main
+  group: deploy-monsterasp-production
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    name: Build, publish and deploy
+  build-and-deploy:
     runs-on: windows-latest
+
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up .NET 10
+      - name: Setup .NET 10 SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore SchoolManagment.slnx
+      - name: Restore dependencies (win-x86)
+        run: dotnet restore SchoolManagment.API/SchoolManagment.API.csproj -r win-x86
 
-      - name: Build
-        run: dotnet build SchoolManagment.slnx --configuration Release --no-restore
+      - name: Publish for MonsterASP (win-x86)
+        run: dotnet publish SchoolManagment.API/SchoolManagment.API.csproj --configuration Release --output ./publish --runtime win-x86 --no-restore
 
-      - name: Publish API
-        run: >
-          dotnet publish SchoolManagment.API/SchoolManagment.API.csproj
-          --configuration Release
-          --output "${{ github.workspace }}\publish"
-          --runtime win-x86
-          --self-contained false
+      - name: Verify publish output
+        run: dir publish
 
-      - name: Deploy via Web Deploy
-        uses: rasmusbuchholdt/simply-web-deploy@2.2.0
+      # IIS locks DLLs while the site runs. app_offline.htm stops the app before file replace.
+      - name: Stage app_offline.htm
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ./ftp-app-offline | Out-Null
+          Copy-Item deploy/app_offline.htm ./ftp-app-offline/app_offline.htm
+
+      - name: Stop site (upload app_offline.htm)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
-          website-name: ${{ secrets.WEBSITE_NAME }}
-          server-computer-name: ${{ secrets.SERVER_COMPUTER_NAME }}
-          server-username: ${{ secrets.SERVER_USERNAME }}
-          server-password: ${{ secrets.SERVER_PASSWORD }}
-          source-path: "\publish\"
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          local-dir: ./ftp-app-offline/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+          log-level: minimal
+          timeout: 120000
+
+      - name: Wait for IIS to release file locks
+        run: powershell -Command "Start-Sleep -Seconds 20"
+
+      - name: Deploy to MonsterASP wwwroot
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+          dangerous-clean-slate: false
+          log-level: standard
+          timeout: 120000
+          exclude: |
+            **/*.pdb
+            **/.ftp-deploy-sync-state.json
+           
+
+      - name: Start site (remove app_offline.htm)
+        shell: pwsh
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR || '/wwwroot/' }}
+        run: |
+          $dir = $env:FTP_SERVER_DIR.Trim().TrimEnd('/')
+          $remotePath = "$dir/app_offline.htm"
+          & ./deploy/ftp-remove-file.ps1 -Server $env:FTP_SERVER -Username $env:FTP_USERNAME -Password $env:FTP_PASSWORD -RemotePath $remotePath
